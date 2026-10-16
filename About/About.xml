@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ModMetaData>
+  <name>万能眼部兼容</name>
+  <author>Estrella6066</author>
+  <packageId>Estrella6066.universalEyeCompat</packageId>
+  <modVersion>1.0.0</modVersion>
+  <supportedVersions>
+    <li>1.6</li>
+    <li>1.7</li>
+  </supportedVersions>
+  <description><![CDATA[把各种来源的眼部改色统一接到 [NL] Facial Animation 的瞳孔着色通道上。
+
+<b>这个模组做什么</b>
+原版的红眼/灰眼基因、义眼与超凡眼、异象的「肉体掌控」特性与「虚空之触」状态，
+以及各种第三方模组自己加的瞳色，本质上都是往角色脸上叠一层眼睛贴图。
+本模组把这些来源识别出来、取出它们对应的瞳色，交给 Facial Animation 用它自己的瞳孔图层上色。
+不替换任何贴图，也不改动贴图路径，只补颜色。
+
+<b>覆盖范围：自带眼部节点的定义都会自动识别</b>
+不限基因和义眼，也包括第三方模组自定义的 Def 类型 —— 只要某个定义往角色脸上挂了眼睛节点就会被收集。
+判定「是不是眼部节点」，三条判据命中任一即算：
+· 用的是原版的眼部节点类（PawnRenderNodeProperties_Eye）；
+· 节点 worker 继承自眼睛 worker（PawnRenderNodeWorker_Eye）；
+· 跳过标记是 Eyes（RenderSkipFlagDefOf.Eyes）。
+（很多模组把眼睛声明在基类节点上、靠自带 worker 生效，只认那个类和标记会漏掉它们。）
+
+按来源分成四类处理：
+· 基因 / 义眼 / 植入体 —— 颜色是固定值、且确认装在眼球上时，直接注册瞳色定义交给 FA 原流程，对任何角色自动生效；
+· 特性 —— 按「特性 + 等级」处理，只有真正带眼部节点的那一级会被上色；
+· 种族自带的眼睛 —— 写在种族渲染树里的眼睛，全族通用；
+· 没有画贴图的眼部植入体 —— 从眼球手术配方或名称反推。
+
+<b>判定规则：什么时候走 FA 原通道，什么时候改走临时上色</b>
+Facial Animation 的义眼通道有一条硬条件：这条状态必须正好挂在眼球部件上（Part 为左右眼）。
+所以本模组会先读手术配方，再决定每条来源的去向：
+
+· 配方写在眼球上 → 注册成瞳色定义。例：原版义眼、第三方义眼；
+· 配方没写部位、但它是「加装部件」（有 addedPartProps）→ 仍按眼球处理。
+  模块化义眼的升级配方本来就不写部位，这是「没有证据」而不是「反证」；
+· 配方写在头/脸上（机械面罩这类面部叠加）→ 改走渲染前临时上色；
+· 配方没写部位、也不是加装部件（典型是异象的「虚空之触」，它根本不挂在任何部位上，Part 为 null）
+  → 改走渲染前临时上色。
+
+临时上色只看「这个角色身上有没有这条状态 / 特性 / 基因」，不看部位，
+所以装在头/脸上、或者压根不挂部位的来源，也能正确上色。
+反过来说，把这类来源注册成 FA 的定义是永远匹配不到的静默漏色，本模组不会这么做。
+
+<b>颜色的取法：先看作者写没写，再猜</b>
+1. 定义自己声明的颜色最优先 —— 原版允许把颜色直接写在节点上（含「跟随发色」「跟随肤色」两种规则）；
+2. 已知的原版 / DLC 瞳色表（义眼、超凡眼、红眼、灰眼）：红眼与灰眼直接取自 FA 本体的定义，
+   义眼与超凡眼沿用既有取值 —— 这只是「没装官方扩展时的回退色」，装了就以官方定义为准（见下「不会抢占」）；
+3. 眼睛贴图路径表 —— 直接复用原版贴图的改名变体（第三方义眼、模块化义眼等）按路径取既定色；
+4. 以上都没有，才读贴图取主色（按色相分桶挑虹膜色，不会被眼白冲淡）；
+5. 再不行，按 defName / 显示名 / 贴图路径里的颜色词推断；
+6. 最后一条路：从基因自己的图标取主色 —— 给那些既没写颜色、名字里也没有颜色词的基因兜底。
+
+<b>不会抢占</b>
+已经由其他模组（Facial Animation 本体、Experimentals、各种重绘包）写好的瞳色定义，本模组一律让位，绝不覆盖。
+本模组不替换任何贴图，也不改任何贴图路径。
+
+<b>已知限制</b>
+Facial Animation 的瞳色定义只能存「固定一种颜色」，而它的临时上色是按角色整体生效的。
+因此当某个义眼 / 基因的颜色是「跟随发色」这类规则色、且只装在一只眼睛上时，
+两只眼睛会一起变成该规则色 —— 这是 FA 接口本身的限制，不是判读能绕过的问题。
+
+<b>前置</b>
+需要 Harmony 与 [NL] Facial Animation - WIP，建议同时启用 [NL] Facial Animation - Experimentals。
+开启开发者模式后，日志会按「交给 FA / 临时上色 / 让位 / 取不到色 / 启发式识别」分类列出每条来源，
+方便确认某个模组的眼睛有没有被正确接住。
+
+---
+
+<b>What it covers</b>
+Any def that puts an eye render node on a pawn is picked up automatically - not just genes and bionics,
+but also def types added by third-party mods. A node counts as an eye node if any of these holds:
+it is vanilla's eye node class (PawnRenderNodeProperties_Eye), its worker derives from the eye worker
+(PawnRenderNodeWorker_Eye), or it carries the "Eyes" skip flag. Many mods declare eyes on the base node
+class and rely on their own worker, so checking only the class and the skip flag would miss them.
+
+<b>The rule for where a color goes</b>
+Facial Animation can only color an implant hediff when that hediff sits on the eye body part.
+Surgery recipes are therefore read first, and each source is routed accordingly:
+
+- recipe installs it on the eye -> registered as a FA color def (vanilla bionics, third-party bionic eyes);
+- recipe names no part, but the hediff is an added part (it has addedPartProps) -> treated as an eye
+  (modular-bionic upgrade recipes name no part; that is absence of evidence, not evidence against);
+- recipe installs it on the head or face (faceplate-style overlays) -> colored at draw time instead;
+- recipe names no part and it is not an added part (e.g. Anomaly's VoidTouched, which has no part at all,
+  Part is null) -> colored at draw time instead.
+
+Draw-time coloring only asks "does this pawn have that hediff / trait / gene" and does not care about the
+body part, so overlays mounted on the head or on no part at all are still colored correctly. Registering
+those as FA color defs would never match and would be a silent miss, so this mod does not do that.
+
+<b>How the color is chosen</b>
+1. A color declared by the def itself wins - including vanilla's "follow hair color" / "follow skin color";
+2. a table of known vanilla/DLC eye colors (bionics, archotech, red, gray) - red and gray come straight
+   from FA itself, bionics and archotech reuse the established values as a fallback for when the official
+   expansion is not installed (if it is, its defs win - see "never overwritten" below);
+3. a table of known eye texture paths, so renamed clones of vanilla eye textures keep their exact color;
+4. otherwise the eye texture is sampled for its dominant iris color;
+5. otherwise the color is guessed from the defName / label / texture path;
+6. and as a last resort, from the gene's own icon - for genes with no color anywhere else.
+
+Colors already defined by other mods (Facial Animation itself, Experimentals, retexture packs) are never
+overwritten. No texture is replaced and no texture path is changed.
+
+<b>Known limitation</b>
+Facial Animation's color defs hold one fixed color, and its draw-time coloring applies to the pawn as a
+whole. So when a rule-based color (such as "follow hair color") comes from something installed on a single
+eye, both eyes end up in that color. That is a limit of the FA interface, not of the detection.]]></description>
+  <modDependencies>
+    <li>
+      <packageId>brrainz.harmony</packageId>
+      <displayName>Harmony</displayName>
+      <steamWorkshopUrl>steam://url/CommunityFilePage/2009463077</steamWorkshopUrl>
+      <downloadUrl>https://github.com/pardeike/HarmonyRimWorld/releases/latest</downloadUrl>
+    </li>
+    <li>
+      <packageId>Nals.FacialAnimation</packageId>
+      <displayName>[NL] Facial Animation - WIP</displayName>
+      <steamWorkshopUrl>steam://url/CommunityFilePage/1635901197</steamWorkshopUrl>
+    </li>
+  </modDependencies>
+  <loadAfter>
+    <li>brrainz.harmony</li>
+    <li>Nals.FacialAnimation</li>
+  </loadAfter>
+</ModMetaData>
