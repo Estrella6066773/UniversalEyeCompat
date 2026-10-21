@@ -1,7 +1,7 @@
 using UnityEngine;
 using Verse;
 
-namespace UniversalEyeCompat
+namespace UniversalEyeColorPatch
 {
     /// <summary>一条来源的颜色该怎么算。</summary>
     public enum EyeColorMode
@@ -19,18 +19,15 @@ namespace UniversalEyeCompat
     /// <summary>
     /// 一条眼部来源的颜色说明。
     ///
-    /// 为什么不是单纯的 Color：
-    /// 原版渲染节点自己就支持「颜色跟随发色 / 肤色」（PawnRenderNodeProperties.colorType），
-    /// 不少第三方模组正是这么定义眼睛的 —— 眼睛颜色跟着头发走。这类来源没有固定色值，
-    /// 写不进 FA 的 EyeballColorDef（那是静态定义），只能在渲染前按 pawn 现算，
-    /// 所以颜色必须能表达成「规则」而不是「数值」。本类型就是那条规则。
+    /// FA 的 EyeballColorDef 只能存固定色，而原版渲染节点自己支持「颜色跟随发色 / 肤色」，
+    /// 不少第三方模组正是这么定义眼睛的。这类来源没有固定色值，只能在渲染前按 pawn 现算，
+    /// 所以颜色必须能表达成「规则」而不是「数值」。
     ///
     /// PostFactor 对应原版 PawnRenderNodeProperties.colorRGBPostFactor：
-    /// 原版是在 ColorFor 里「算完颜色再乘」的，所以固定色也存原始值、统一在 TryResolve 里相乘，
+    /// 原版是在 ColorFor 里「算完颜色再乘」的，这里统一在 TryResolve 里相乘，
     /// 避免 Hair/Skin 两种模式漏乘、或者固定色被乘两次。
     ///
-    /// 取值规则与 Verse.PawnRenderNode.ColorFor 保持一致（含雕像色），
-    /// 这样「我们算给 FA 的颜色」与「原版自己渲染这颗眼球时用的颜色」是同一个值。
+    /// 取值规则与 Verse.PawnRenderNode.ColorFor 保持一致（含雕像色）。
     /// </summary>
     public struct EyeColorSpec
     {
@@ -112,7 +109,7 @@ namespace UniversalEyeCompat
                 case EyeColorMode.Skin:
                     return PostFactor == 1f ? "跟随肤色" : "跟随肤色×" + PostFactor.ToString("0.###");
                 default:
-                    return "RGB(" + Fixed.r.ToString("0.000") + "," + Fixed.g.ToString("0.000") + "," + Fixed.b.ToString("0.000") + ")"
+                    return ColorText.Of(Fixed)
                         + (PostFactor == 1f ? string.Empty : "×" + PostFactor.ToString("0.###"));
             }
         }

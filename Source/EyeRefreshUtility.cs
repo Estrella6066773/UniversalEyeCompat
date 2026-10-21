@@ -1,7 +1,7 @@
 using RimWorld;
 using Verse;
 
-namespace UniversalEyeCompat
+namespace UniversalEyeColorPatch
 {
     /// <summary>
     /// 让 FA 的瞳孔重新上色。
@@ -15,13 +15,13 @@ namespace UniversalEyeCompat
     /// 1. 把控制器标脏（SetDirty），下一次 ReloadIfNeed 就会走 LoadTextures；
     /// 2. 顺手把渲染树与头像缓存标脏，保证重建节点时能走到上面那一步。
     ///
-    /// 注意：本方法可能被频繁触发，因此在调用方先做「是否与眼睛有关」的廉价判断，这里只负责执行。
+    /// 注意：本方法可能被频繁触发，因此在调用方先做「是否与眼睛有关」的廉价判断。
     /// </summary>
     public static class EyeRefreshUtility
     {
         public static void RefreshPawn(Pawn pawn)
         {
-            if (pawn == null || !EyeCompatRegistry.Initialized)
+            if (pawn == null || !EyeColorRegistry.Initialized)
             {
                 return;
             }

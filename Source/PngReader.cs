@@ -3,7 +3,7 @@ using System.IO;
 using System.IO.Compression;
 using System.Text;
 
-namespace UniversalEyeCompat
+namespace UniversalEyeColorPatch
 {
     /// <summary>
     /// 自带的最小 PNG 解码器。

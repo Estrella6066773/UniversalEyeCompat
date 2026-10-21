@@ -5,7 +5,7 @@ using HarmonyLib;
 using RimWorld;
 using Verse;
 
-namespace UniversalEyeCompat
+namespace UniversalEyeColorPatch
 {
     /// <summary>
     /// 在「眼部相关状态变化」之后让 FA 重新给瞳孔上色。
@@ -14,21 +14,20 @@ namespace UniversalEyeCompat
     /// 1. Pawn_HealthTracker.AddHediff(Hediff, ...)：装上义眼、染上「虚空之触」等；
     /// 2. Pawn_HealthTracker.RemoveHediff(Hediff)：拆掉义眼、状态痊愈；
     /// 3. Pawn_GeneTracker.Notify_GenesChanged(GeneDef)：基因增减；
-    /// 4. TraitSet.GainTrait / RemoveTrait：特性增减（异象的「肉体掌控」这类带眼睛节点的特性）。
+    /// 4. TraitSet.GainTrait / RemoveTrait：特性增减。
     ///
     /// 为什么必须补：
     /// FA 的 EyeballControllerComp 只在颜色字段、脸型或被显式标脏时才重载瞳孔贴图。
-    /// 上面四件事都只改变 hediff / 基因 / 特性，不会动颜色字段，所以不补的话瞳色会一直停在旧值上。
+    /// 上面四件事都只改变 hediff / 基因 / 特性，不会动颜色字段。
     ///
     /// 注意事项：
     /// - AddHediff 有 HediffDef 与 Hediff 两个重载，后者被前者调用，所以只补 Hediff 那个，避免重复刷新。
     /// - 触发频率高，先做「是否与眼睛有关」的廉价判断，再走 EyeRefreshUtility。
-    /// - 基因变化按 FA 自己的写法挂在 Pawn_GeneTracker 上；本类型只加 Postfix，不动 FA 已有的 Prefix。
-    /// - 这里只做「尽快刷新」；漏掉的路径由 EyeCheckLoadTexturesPatches 兜底。
+    /// - 这里只做「尽快刷新」；漏掉的路径由 CheckLoadTexturesPatch 兜底。
     /// </summary>
-    public static class EyeRefreshPatches
+    public static class RefreshPatches
     {
-        public const string HarmonyIdPrefix = "[万能眼部兼容] ";
+        public const string HarmonyIdPrefix = "[万用瞳色补丁] ";
 
         public static void Apply(Harmony harmony)
         {
@@ -48,14 +47,14 @@ namespace UniversalEyeCompat
                         && m.GetParameters()[0].ParameterType == typeof(Hediff));
                 if (target == null)
                 {
-                    Log.Warning(HarmonyIdPrefix + "找不到 Pawn_HealthTracker.AddHediff(Hediff, ...)，瞳色不会随义眼安装刷新。");
+                    EyeColorPatchMod.Warn("找不到 Pawn_HealthTracker.AddHediff(Hediff, ...)，瞳色不会随义眼安装刷新。");
                     return;
                 }
-                harmony.Patch(target, postfix: new HarmonyMethod(typeof(EyeRefreshPatches), nameof(Postfix_AddHediff)));
+                harmony.Patch(target, postfix: new HarmonyMethod(typeof(RefreshPatches), nameof(Postfix_AddHediff)));
             }
             catch (Exception e)
             {
-                Log.Warning(HarmonyIdPrefix + "补丁 AddHediff 失败：" + e.Message);
+                EyeColorPatchMod.Warn("补丁 AddHediff 失败：" + e.Message);
             }
         }
 
@@ -69,14 +68,14 @@ namespace UniversalEyeCompat
                         && m.GetParameters()[0].ParameterType == typeof(Hediff));
                 if (target == null)
                 {
-                    Log.Warning(HarmonyIdPrefix + "找不到 Pawn_HealthTracker.RemoveHediff(Hediff)，瞳色不会随拆下义眼刷新。");
+                    EyeColorPatchMod.Warn("找不到 Pawn_HealthTracker.RemoveHediff(Hediff)，瞳色不会随拆下义眼刷新。");
                     return;
                 }
-                harmony.Patch(target, postfix: new HarmonyMethod(typeof(EyeRefreshPatches), nameof(Postfix_RemoveHediff)));
+                harmony.Patch(target, postfix: new HarmonyMethod(typeof(RefreshPatches), nameof(Postfix_RemoveHediff)));
             }
             catch (Exception e)
             {
-                Log.Warning(HarmonyIdPrefix + "补丁 RemoveHediff 失败：" + e.Message);
+                EyeColorPatchMod.Warn("补丁 RemoveHediff 失败：" + e.Message);
             }
         }
 
@@ -88,14 +87,14 @@ namespace UniversalEyeCompat
                     .FirstOrDefault(m => m.Name == "Notify_GenesChanged");
                 if (target == null)
                 {
-                    Log.Warning(HarmonyIdPrefix + "找不到 Pawn_GeneTracker.Notify_GenesChanged，瞳色不会随基因变化刷新。");
+                    EyeColorPatchMod.Warn("找不到 Pawn_GeneTracker.Notify_GenesChanged，瞳色不会随基因变化刷新。");
                     return;
                 }
-                harmony.Patch(target, postfix: new HarmonyMethod(typeof(EyeRefreshPatches), nameof(Postfix_Notify_GenesChanged)));
+                harmony.Patch(target, postfix: new HarmonyMethod(typeof(RefreshPatches), nameof(Postfix_Notify_GenesChanged)));
             }
             catch (Exception e)
             {
-                Log.Warning(HarmonyIdPrefix + "补丁 Notify_GenesChanged 失败：" + e.Message);
+                EyeColorPatchMod.Warn("补丁 Notify_GenesChanged 失败：" + e.Message);
             }
         }
 
@@ -111,27 +110,27 @@ namespace UniversalEyeCompat
                     new[] { typeof(Trait), typeof(bool) }, null);
                 if (gain == null)
                 {
-                    Log.Warning(HarmonyIdPrefix + "找不到 TraitSet.GainTrait，瞳色不会随特性增加刷新。");
+                    EyeColorPatchMod.Warn("找不到 TraitSet.GainTrait，瞳色不会随特性增加刷新。");
                 }
                 else
                 {
-                    harmony.Patch(gain, postfix: new HarmonyMethod(typeof(EyeRefreshPatches), nameof(Postfix_TraitChanged)));
+                    harmony.Patch(gain, postfix: new HarmonyMethod(typeof(RefreshPatches), nameof(Postfix_TraitChanged)));
                 }
 
                 MethodInfo remove = typeof(TraitSet).GetMethod("RemoveTrait", AccessTools.all, null,
                     new[] { typeof(Trait), typeof(bool) }, null);
                 if (remove == null)
                 {
-                    Log.Warning(HarmonyIdPrefix + "找不到 TraitSet.RemoveTrait，瞳色不会随特性移除刷新。");
+                    EyeColorPatchMod.Warn("找不到 TraitSet.RemoveTrait，瞳色不会随特性移除刷新。");
                 }
                 else
                 {
-                    harmony.Patch(remove, postfix: new HarmonyMethod(typeof(EyeRefreshPatches), nameof(Postfix_TraitChanged)));
+                    harmony.Patch(remove, postfix: new HarmonyMethod(typeof(RefreshPatches), nameof(Postfix_TraitChanged)));
                 }
             }
             catch (Exception e)
             {
-                Log.Warning(HarmonyIdPrefix + "补丁 TraitSet 失败：" + e.Message);
+                EyeColorPatchMod.Warn("补丁 TraitSet 失败：" + e.Message);
             }
         }
 
@@ -141,8 +140,7 @@ namespace UniversalEyeCompat
             {
                 return;
             }
-            // IsEyePart 覆盖「挂眼球但没被扫描到」的来源，IsKnownEyeHediff 覆盖扫描到的全部 hediff（含全身状态）。
-            if (EyeRefreshUtility.IsEyePart(hediff.Part) || EyeCompatRegistry.IsKnownEyeHediff(hediff.def))
+            if (EyeRefreshUtility.IsEyePart(hediff.Part) || EyeColorRegistry.IsKnownEyeHediff(hediff.def))
             {
                 EyeRefreshUtility.RefreshPawn(___pawn);
             }
@@ -154,7 +152,7 @@ namespace UniversalEyeCompat
             {
                 return;
             }
-            if (EyeRefreshUtility.IsEyePart(hediff.Part) || EyeCompatRegistry.IsKnownEyeHediff(hediff.def))
+            if (EyeRefreshUtility.IsEyePart(hediff.Part) || EyeColorRegistry.IsKnownEyeHediff(hediff.def))
             {
                 EyeRefreshUtility.RefreshPawn(___pawn);
             }
@@ -162,11 +160,11 @@ namespace UniversalEyeCompat
 
         public static void Postfix_Notify_GenesChanged(Pawn ___pawn, GeneDef addedOrRemovedGene)
         {
-            if (addedOrRemovedGene == null || EyeCompatRegistry.GeneKeys.Count == 0)
+            if (addedOrRemovedGene == null || EyeColorRegistry.GeneKeys.Count == 0)
             {
                 return;
             }
-            if (EyeCompatRegistry.IsKnownEyeGene(addedOrRemovedGene.defName))
+            if (EyeColorRegistry.IsKnownEyeGene(addedOrRemovedGene.defName))
             {
                 EyeRefreshUtility.RefreshPawn(___pawn);
             }
@@ -175,11 +173,11 @@ namespace UniversalEyeCompat
         /// <summary>
         /// 特性变化后刷新。不需要判断是哪个特性：TraitSet 的 pawn 字段就是我们要刷的角色，
         /// 而 EyeRefreshUtility 内部只做「有没有控制器」的判断，成本很低；
-        /// 更要紧的是「特性被别的特性压制 / 解除压制」时也应该刷新，这种变化判断单个特性反而会漏。
+        /// 更要紧的是「特性被别的特性压制 / 解除压制」时也应该刷新。
         /// </summary>
         public static void Postfix_TraitChanged(Pawn ___pawn)
         {
-            if (EyeCompatRegistry.TraitColors.Count == 0)
+            if (EyeColorRegistry.TraitColors.Count == 0)
             {
                 return;
             }

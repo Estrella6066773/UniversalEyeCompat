@@ -1,9 +1,17 @@
 using System;
-using System.Collections.Generic;
 using UnityEngine;
 
-namespace UniversalEyeCompat
+namespace UniversalEyeColorPatch
 {
+    /// <summary>日志用的颜色格式化。只有一处，避免每个文件的格式串慢慢跑偏。</summary>
+    public static class ColorText
+    {
+        public static string Of(Color color)
+        {
+            return "RGB(" + color.r.ToString("0.000") + "," + color.g.ToString("0.000") + "," + color.b.ToString("0.000") + ")";
+        }
+    }
+
     /// <summary>
     /// 颜色小工具：饱和度调节与关键词猜色。
     /// </summary>
@@ -75,9 +83,6 @@ namespace UniversalEyeCompat
             ("black", new Color(0.10f, 0.10f, 0.12f)),
 
             // 以下是「材质词」而不是颜色词，故意排在最后，只有前面所有颜色词都没命中时才用。
-            // 义眼 / 光学装置在贴图上通常就是原版 BionicEye 那一层青蓝色，用它当兜底最不容易出错。
-            // 只有在「已确认是眼部来源」的前提下才会走到这里（调用方只对眼部来源取色），
-            // 所以 implant / synthetic 这类泛词不会把非眼部件的东西染成青色。
             ("bionic", new Color(0.25f, 0.85f, 1f)),
             ("prosthetic", new Color(0.25f, 0.85f, 1f)),
             ("optical", new Color(0.25f, 0.85f, 1f)),
@@ -89,16 +94,7 @@ namespace UniversalEyeCompat
             ("archotech", new Color(0.85f, 1f, 0.25f))
         };
 
-        /// <summary>按关键词猜色；猜不到返回 false。</summary>
-        public static bool TryGuessFromName(string defName, string label, out Color color)
-        {
-            return TryGuess((defName ?? string.Empty) + " " + (label ?? string.Empty), out color);
-        }
-
-        /// <summary>
-        /// 按任意文本猜色。调用方可以把 defName、label、甚至贴图路径拼进来：
-        /// 原版与不少模组的眼睛贴图目录名本身就带颜色词（GrayEyes、PurpleEyes），比定义名更可靠。
-        /// </summary>
+        /// <summary>按任意文本猜色。调用方可以把 defName、label、甚至贴图路径拼进来。</summary>
         public static bool TryGuess(string haystack, out Color color)
         {
             color = Color.white;

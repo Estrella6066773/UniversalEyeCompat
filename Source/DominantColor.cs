@@ -1,36 +1,37 @@
-namespace UniversalEyeCompat
+namespace UniversalEyeColorPatch
 {
     /// <summary>
-    /// 从 RGBA 像素里挑出「这张图看起来是什么颜色」。
+    /// 从 RGBA 像素里挑出「这张图的眼睛是什么颜色」。
     ///
-    /// 为什么单独成一个文件：
     /// 本类型刻意不引用 UnityEngine 与任何游戏类型，输入输出都是普通数值，
-    /// 因此可以被离线测试工程直接编译进去，用 System.Drawing 之类的独立解码器做对照，
-    /// 不必启动游戏就能验证算法改动。
+    /// 因此可以被离线测试工程直接编译进去，不必启动游戏就能验证算法改动。
     ///
-    /// 算法：
-    /// 1. 跳过透明像素（Alpha 过低）与过暗像素（瞳孔、描边）；
-    /// 2. 按色相分成 24 个桶，另设一个「无彩色」桶装灰白；
-    /// 3. 取权重最大的桶，在桶内做 Alpha 加权平均。
+    /// 算法（两趟）：
+    /// 1. 第一趟只统计「有彩色」的像素：Alpha 足够、明度不太暗（排除瞳孔与描边）、
+    ///    饱和度够高（排除眼白与灰色抗锯齿）；
+    /// 2. 按色相分 24 个桶，取权重最大的桶，桶内做饱和度为权的平均；
+    /// 3. 第一趟一个像素都没有（灰度眼、纯色贴图）时，第二趟放宽到所有不透明像素。
     ///
-    /// 权重 = Alpha × (基础权重 + 饱和度)：
-    /// 加饱和度是为了让彩色虹膜压过白色眼白，否则「红眼」会被眼白冲淡成粉色。
+    /// 为什么先只看彩色像素：
+    /// 眼贴图里同时有白色眼白、黑色瞳孔与一圈黑色描边，还有大量低饱和的抗锯齿边缘。
+    /// 直接平均会把红色算成粉色、蓝色算成灰蓝、黄色算成土黄 —— 精灵那种「一整颗彩色眼球」
+    /// 的贴图尤其明显。先筛掉无彩色像素，剩下的就是虹膜本身。
+    ///
+    /// 权重 = Alpha × (基础权重 + 饱和度)，保证「饱和的虹膜像素」压过「浅色的高光」，
+    /// 但高光仍然参与（它决定这颗眼睛偏亮还是偏暗）。
     /// </summary>
     internal static class DominantColor
     {
         /// <summary>色相分桶数量，每桶 15°。</summary>
         public const int HueBuckets = 24;
 
-        /// <summary>低于这个明度的像素当瞳孔 / 描边丢掉，不参与统计。</summary>
-        public const float MinValue = 0.10f;
+        /// <summary>低于这个明度的像素当瞳孔 / 描边丢掉。</summary>
+        public const float MinValue = 0.12f;
 
-        /// <summary>饱和度低于这个值的像素算无彩色，统一进最后一个桶。</summary>
-        public const float AchromaticSaturation = 0.12f;
+        /// <summary>第一趟「只要彩色」时的饱和度门槛。</summary>
+        public const float IrisSaturation = 0.18f;
 
-        /// <summary>
-        /// 无彩色且亮过这个值的像素当眼白丢掉。
-        /// 只对无彩色生效：高饱和的亮色像素是「亮金色」这类真正的虹膜色，不能一起丢掉。
-        /// </summary>
+        /// <summary>无彩色且亮过这个值的像素当眼白丢掉。</summary>
         public const float MaxAchromaticValue = 0.90f;
 
         /// <summary>饱和度在权重里的基础占比，保证纯灰也有稳定的相对权重。</summary>
@@ -49,6 +50,21 @@ namespace UniversalEyeCompat
             {
                 return false;
             }
+
+            // 第一趟：只收虹膜色的像素。
+            if (Find(rgba, pixelCount, true, out r, out g, out b))
+            {
+                return true;
+            }
+            // 第二趟：灰度眼、纯色贴图，退回到所有不透明像素。
+            return Find(rgba, pixelCount, false, out r, out g, out b);
+        }
+
+        private static bool Find(byte[] rgba, int pixelCount, bool colorfulOnly, out float r, out float g, out float b)
+        {
+            r = 0f;
+            g = 0f;
+            b = 0f;
 
             double[] bucketR = new double[HueBuckets + 1];
             double[] bucketG = new double[HueBuckets + 1];
@@ -74,10 +90,14 @@ namespace UniversalEyeCompat
                 }
                 float min = Min(pr, pg, pb);
                 float saturation = (max - min) / max;
-                bool achromatic = saturation < AchromaticSaturation;
+                bool achromatic = saturation < 0.12f;
                 if (achromatic && max > MaxAchromaticValue)
                 {
-                    // 白色眼白：不是虹膜颜色，丢掉。只对无彩色生效，别把亮金色也丢掉。
+                    // 白色眼白：不是虹膜颜色。
+                    continue;
+                }
+                if (colorfulOnly && saturation < IrisSaturation)
+                {
                     continue;
                 }
                 int bucket = achromatic ? HueBuckets : HueBucket(pr, pg, pb, max, min);

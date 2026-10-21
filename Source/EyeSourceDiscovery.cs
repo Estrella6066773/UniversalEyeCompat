@@ -4,38 +4,33 @@ using System.Reflection;
 using RimWorld;
 using Verse;
 
-namespace UniversalEyeCompat
+namespace UniversalEyeColorPatch
 {
     /// <summary>
     /// 扫描 Def 数据库，找出「会改变角色眼部外观」的来源。
     ///
-    /// 本模组的价值全在这里：能识别多少种来源，就代表 FA 的瞳色着色能覆盖多少个第三方模组。
-    /// 因此识别口径刻意做宽，每条来源都会记下「靠什么认出来的」（EyeSource.DetectReason），
-    /// 开发者模式日志里能一眼看出是节点命中还是名称兜底。
+    /// 能识别多少种来源，就代表 FA 的瞳色着色能覆盖多少个第三方模组。
+    /// 因此识别口径刻意做宽，每条来源都会记下「靠什么认出来的」（EyeSource.DetectReason）。
     ///
     /// 识别口径：
-    /// A. 通用：任何 Def 类型，只要它的 renderNodeProperties 里含 PawnRenderNodeProperties_Eye
-    ///    （基因、义眼、超凡眼、异象的虚空之触，以及第三方模组自定义的同类定义）；
+    /// A. 通用：任何 Def 类型，只要它的 renderNodeProperties 里含眼部节点；
     /// B. 特性：TraitDef.degreeDatas 里某个等级含眼睛节点，按等级逐条产出；
-    /// C. 种族：ThingDef.race.renderTree 的节点树里含眼睛节点（第三方种族自带的眼球节点）；
+    /// C. 种族：ThingDef.race.renderTree 的节点树里含眼睛节点；
     /// D. 基因补充：exclusionTags 里有眼睛相关标签（这类基因靠互斥标签管瞳色，本身不画节点）；
-    /// E. hediff 补充 1：某条 RecipeDef 写在眼球上且 addsHediff 指向它（没画贴图的纯数值义眼）；
-    /// F. hediff 补充 2：addedPartProps 非空且名字明显是眼睛（第三方义眼，既没贴图也没配方信息）。
+    /// E. hediff 补充 1：某条 RecipeDef 写在眼球上且 addsHediff 指向它；
+    /// F. hediff 补充 2：addedPartProps 非空且名字明显是眼睛。
     ///
-    /// 注意事项：
-    /// - 只做只读扫描，不修改任何 Def；写操作全部集中在 EyeballColorDefInjector。
-    /// - 特性没有 FA 通道，本类型只负责把它们收集出来，颜色由 EyeCompatRegistry.TraitColors 在渲染前使用。
-    /// - 扫描在 StaticConstructorOnStartup 里只跑一次，允许用反射换覆盖率；运行期不再反射。
+    /// 只做只读扫描，不修改任何 Def；写操作全部集中在 EyeColorDefInjector。
     /// </summary>
-    public static class EyeEffectDiscovery
+    public static class EyeSourceDiscovery
     {
         /// <summary>某条 hediff 到底装在哪：配方说了算。</summary>
         private enum PartVerdict
         {
-            /// <summary>没有任何配方给出部位信息（例如「模块化升级」类配方不限定部位）。无证据 ≠ 反证。</summary>
+            /// <summary>没有任何配方给出部位信息。无证据 ≠ 反证。</summary>
             Unknown,
 
-            /// <summary>有配方把它装在眼球上 —— 那 FA 的 hediff 通道能用上。</summary>
+            /// <summary>有配方把它装在眼球上。</summary>
             Eye,
 
             /// <summary>有配方把它装在别的部位上（典型：面罩装在头/颅骨上）。</summary>
@@ -69,21 +64,14 @@ namespace UniversalEyeCompat
         /// <summary>
         /// 先算「每条 hediff 装在哪」。
         ///
-        /// 为什么必须先算：FA 的 hediff 通道匹配条件是 hediff.Part 正好等于左右眼部件
-        /// （见 EyeballControllerComp.LoadTextures），所以一条 hediff 值不值得注册成 EyeballColorDef，
-        /// 完全取决于它装在哪。装错地方的定义永远不会生效 —— 是「静默漏色」，最坏的一种失败。
+        /// FA 的 hediff 通道匹配条件是 hediff.Part 正好等于左右眼部件，
+        /// 所以一条 hediff 值不值得注册成 EyeballColorDef，完全取决于它装在哪。
+        /// 装错地方的定义永远不会生效 —— 是「静默漏色」，最坏的一种失败。
         ///
         /// 判定规则：
         /// - 有配方把它装在眼球上 → Eye；
         /// - 有配方明确把它装在别处（面罩装头、颅骨等）→ Other；
         /// - 配方没限定部位（模块化升级、removesHediff 换装之类）→ Unknown，按没有反证处理。
-        ///
-        /// 三类都见过的真实例子（均来自本机已装模组）：
-        /// - Eye：原版 InstallBionicEye 的 appliedOnFixedBodyParts 是 Eye；FSFVBE 的义眼配方同样是 Eye；
-        /// - Other：EBSG 的机械面罩配方是 Head —— 它的眼部叠加节点以前会被我们误注册成 EyeballColorDef，
-        ///   而 FA 永远匹配不上，等于白注册；
-        /// - Unknown：EBSG 的 LTS_ModularBionicEye 是「把已装的义眼升级成模块化」，
-        ///   配方只写 removesHediff/addsHediff，不写部位 —— 这种就必须当眼球处理，否则会丢掉整条来源。
         /// </summary>
         private static Dictionary<string, PartVerdict> BuildHediffPartVerdicts()
         {
@@ -93,7 +81,6 @@ namespace UniversalEyeCompat
                 HediffDef added = recipe.addsHediff;
                 if (added == null || recipe.appliedOnFixedBodyParts.NullOrEmpty())
                 {
-                    // 没有部位信息就不构成证据，不覆盖已有结论。
                     continue;
                 }
                 bool onEye = IsAppliedOnEye(recipe);
@@ -101,8 +88,7 @@ namespace UniversalEyeCompat
 
                 if (verdicts.TryGetValue(added.defName, out PartVerdict existing))
                 {
-                    // 同一条 hediff 若有多种装法，只要有一种落在眼球上就按 Eye 算：
-                    // 这时 FA 至少能在装到眼球那些实例上生效，注册是值得的。
+                    // 同一条 hediff 若有多种装法，只要有一种落在眼球上就按 Eye 算。
                     if (existing == PartVerdict.Eye)
                     {
                         continue;
@@ -130,9 +116,8 @@ namespace UniversalEyeCompat
         /// A. 通用扫描：遍历所有「有 Def 数据库」的类型，凡是带 renderNodeProperties 属性的，
         /// 就把它的 def 拿出来看有没有眼睛节点。
         ///
-        /// 为什么用 GenDefDatabase.AllDefTypesWithDatabases 而不是写死 GeneDef / HediffDef：
+        /// 用 GenDefDatabase.AllDefTypesWithDatabases 而不是写死 GeneDef / HediffDef：
         /// 写死的话，第三方模组自定义的 Def 类型（自带眼部节点的那些）永远扫不到。
-        /// 这里用反射读属性名，也不依赖 IRenderNodePropertiesParent 是否是公开接口。
         /// </summary>
         private static void ScanRenderNodeDefs(
             List<EyeSource> result,
@@ -174,6 +159,7 @@ namespace UniversalEyeCompat
                             };
                             EyeNodeScanner.CollectEyeData(nodes, source.TexturePaths, ref declared);
                             source.Declared = declared;
+                            source.Elf = EyeColorTables.IsElfSource(gene.defName, source.TexturePaths);
                             result.Add(source);
                         }
                         continue;
@@ -189,15 +175,6 @@ namespace UniversalEyeCompat
 
                             // 只有「能确定这条 hediff 会挂在眼球部件上」才敢注册成 FA 的 EyeballColorDef，
                             // 否则改走运行期临时上色 —— 那条路不看部位。
-                            //
-                            // 判据（每一条都对应本机实测到的真实模组）：
-                            // - 配方写明装在眼球上（Eye）→ 可以注册。例：原版 BionicEye、FSFVBE 的义眼；
-                            // - 配方没写部位、但这是「加装部件」（addedPartProps 非空）→ 按眼球处理。
-                            //   加装部件必然绑定一个 Part，而模组既然给它画了眼睛叠加，那个 Part 几乎必然是眼球。
-                            //   例：EBSG 的 LTS_ModularBionicEye（模块化升级配方不写部位）；
-                            // - 配方没写部位、且不是加装部件 → 不注册。这类是「身上/全身状态」，
-                            //   典型是异象的 VoidTouched：它有眼部节点，但 Part 为 null，
-                            //   FA 的 hediff 循环要求 Part 正好是左右眼部件，注册了也永远匹配不到。
                             bool onEye = verdict == PartVerdict.Eye
                                 || (verdict == PartVerdict.Unknown && isAddedPart);
 
@@ -214,6 +191,7 @@ namespace UniversalEyeCompat
                             };
                             EyeNodeScanner.CollectEyeData(nodes, source.TexturePaths, ref declared);
                             source.Declared = declared;
+                            source.Elf = EyeColorTables.IsElfSource(hediff.defName, source.TexturePaths);
                             result.Add(source);
 
                             if (!onEye)
@@ -242,7 +220,7 @@ namespace UniversalEyeCompat
         /// C. 种族自带的眼睛：写在 ThingDef.race.renderTree 里的眼睛节点，全族通用。
         ///
         /// 原版人类没有种族级眼睛节点（眼睛是头部贴图的一部分），
-        /// 所以这里命中的基本全是第三方种族模组，正是我们想扩展覆盖的那批。
+        /// 所以这里命中的基本全是第三方种族模组。
         /// </summary>
         private static void ScanRaces(List<EyeSource> result, List<string> notes)
         {
@@ -294,7 +272,7 @@ namespace UniversalEyeCompat
                 {
                     continue;
                 }
-                result.Add(new EyeSource
+                EyeSource source = new EyeSource
                 {
                     Kind = EyeSourceKind.Gene,
                     SourceDef = gene,
@@ -302,7 +280,9 @@ namespace UniversalEyeCompat
                     IconPath = gene.iconPath,
                     DetectReason = "眼睛相关互斥标签",
                     Heuristic = true
-                });
+                };
+                source.Elf = EyeColorTables.IsElfSource(gene.defName, source.TexturePaths);
+                result.Add(source);
             }
         }
 
@@ -354,10 +334,7 @@ namespace UniversalEyeCompat
         ///
         /// 判据是 addedPartProps 非空（确实是「替换部件」的植入体）加上名字里有 eye 之类的词。
         /// 名字匹配是启发式，会误判「名字带 eye 但装在别处」的植入体，
-        /// 所以这条来源一律按「部位未证明」处理，改走运行期临时上色 ——
-        /// 临时上色不看部位，装在额头上的第三只眼、装在脸上的义眼都能生效，
-        /// 只有「误判成眼睛的非眼部植入体」会多上一次色，那是这类启发式能承受的最小代价。
-        /// 开发者在开发者模式下能看到每条来源的识别依据，方便核查。
+        /// 所以这条来源一律按「部位未证明」处理，改走运行期临时上色。
         /// </summary>
         private static void ScanHediffsByAddedPartName(List<EyeSource> result, HashSet<string> seenHediffNames, List<string> notes)
         {
@@ -385,7 +362,7 @@ namespace UniversalEyeCompat
                     DetectReason = "植入体名称含眼",
                     Heuristic = true
                 });
-                notes.Add("hediff " + hediff.defName + " 按名称识别为眼部植入体（启示式，可能有误判）。");
+                notes.Add("hediff " + hediff.defName + " 按名称识别为眼部植入体（启发式，可能有误判）。");
             }
         }
 
@@ -414,7 +391,6 @@ namespace UniversalEyeCompat
         ///
         /// 判据与 DynamicPawnRenderNodeSetup_Traits 对齐（它负责真正把这些节点挂上渲染树）：
         /// 先看 HasDefinedGraphicProperties，再看 RenderNodeProperties。
-        /// 这样「扫描到的特性」与「实际会被画出来的特性」是同一批，不会给不会渲染的特性白上色。
         /// </summary>
         private static void ScanTraits(List<EyeSource> result)
         {
@@ -438,7 +414,7 @@ namespace UniversalEyeCompat
                         Kind = EyeSourceKind.Trait,
                         SourceDef = trait,
                         Degree = degree.degree,
-                        Key = EyeCompatRegistry.TraitKey(trait.defName, degree.degree),
+                        Key = EyeColorRegistry.TraitKey(trait.defName, degree.degree),
                         DetectReason = "特性等级眼部节点"
                     };
                     EyeNodeScanner.CollectEyeData(degree.RenderNodeProperties, source.TexturePaths, ref declared);

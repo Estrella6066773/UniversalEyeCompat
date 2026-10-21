@@ -4,7 +4,7 @@ using System.IO;
 using UnityEngine;
 using Verse;
 
-namespace UniversalEyeCompat
+namespace UniversalEyeColorPatch
 {
     /// <summary>
     /// 眼睛叠加贴图的取色器：把一张眼贴图压成一个能用的瞳色。
@@ -12,13 +12,9 @@ namespace UniversalEyeCompat
     /// 数据流向：EyeColorResolver 给出 texPath → 本类型找文件 → 解像素 → 交给 DominantColor 求主色。
     ///
     /// 两条取像素的路：
-    /// 1. 先试 ContentFinder 拿 Texture2D 再 GetPixels32，这条路在部分平台/压缩设置下会失败；
+    /// 1. 先试 ContentFinder 拿 Texture2D 再 GetPixels32；
     /// 2. 失败后退回自己找模组目录里的 .png 文件并用 PngReader 解码。
     /// 两条都失败才返回 false，由调用方改用名称关键词兜底。
-    ///
-    /// 为什么要挑主色而不是直接求平均：
-    /// 眼贴图里通常同时有白色眼白、黑色瞳孔、抗锯齿边缘，直接求平均会把虹膜色拉淡拉灰
-    /// （黄色眼会算成土黄）。主色算法见 DominantColor，那个文件不依赖游戏类型，可离线测试。
     ///
     /// 注意事项：
     /// - 贴图路径形如 Things/Pawn/Humanlike/HeadAttachments/RedEyes/Male/RedEyes_Male，不含扩展名；
@@ -73,9 +69,7 @@ namespace UniversalEyeCompat
             return true;
         }
 
-        /// <summary>
-        /// FA 风格的贴图路径里带 {0} 占位（朝向或部件名），这里只试几种最常见的展开。
-        /// </summary>
+        /// <summary>FA 风格的贴图路径里带 {0} 占位（朝向或部件名），这里只试几种最常见的展开。</summary>
         private static IEnumerable<string> ExpandPlaceholder(string texPath)
         {
             if (texPath.IndexOf("{0}", StringComparison.Ordinal) < 0)
@@ -179,8 +173,7 @@ namespace UniversalEyeCompat
         ///
         /// 用 ModContentPack.foldersToLoadDescendingOrder 而不是 RootDir：
         /// 许多模组把内容放在版本子目录（1.6/、1.7/）或 Common/ 下，只有这份有序列表才是游戏真正会读的位置。
-        /// Core 同样是列表中的一项（指向 Data/Core），所以原版贴图也能命中 —— 不过 1.7 起原版贴图已打进
-        /// AssetBundles，通常找不到散装文件，这种情况会自动落到名称关键词兜底。
+        /// Core 同样是列表中的一项（指向 Data/Core），所以原版贴图也能命中。
         /// </summary>
         private static string FindTextureFile(string texPath)
         {

@@ -3,13 +3,13 @@ using RimWorld;
 using UnityEngine;
 using Verse;
 
-namespace UniversalEyeCompat
+namespace UniversalEyeColorPatch
 {
     /// <summary>一次扫描的登记结果，供启动日志汇总。</summary>
-    public sealed class EyeCompatInjectResult
+    public sealed class EyeColorInjectResult
     {
         /// <summary>写进 FA 的 EyeballColorDef 表（颜色固定，FA 原流程会自己用）。</summary>
-        public int InjectedToFA;
+        public int InjectedToFa;
 
         /// <summary>颜色是规则（跟随发色/肤色），留在本模组做渲染前临时上色。</summary>
         public int DynamicRegistered;
@@ -32,8 +32,11 @@ namespace UniversalEyeCompat
         /// <summary>取不到颜色，放弃这条来源。</summary>
         public int Unsolved;
 
-        /// <summary>按名称/配方识别出来的启发式来源数，方便核查误判。</summary>
+        /// <summary>按名称/配方识别出来的启发式来源数。</summary>
         public int HeuristicDetected;
+
+        /// <summary>精灵（Faction - Elves）来源数。</summary>
+        public int ElfDetected;
 
         public readonly List<string> Detail = new List<string>();
     }
@@ -43,28 +46,21 @@ namespace UniversalEyeCompat
     ///
     /// 分流规则（按顺序判断）：
     /// 1. 特性 → TraitColors（FA 没有特性通道）；
-    /// 2. 种族 → RaceColors（FA 没有种族通道），且只接受来源自己声明的颜色（见 EyeColorResolver）；
-    /// 3. 不挂眼球的状态 → GlobalHediffColors（FA 的 hediff 分支要求 hediff.Part == 眼球，匹配不到）；
+    /// 2. 种族 → RaceColors，且只接受来源自己声明的颜色；
+    /// 3. 不挂眼球的状态 → GlobalHediffColors；
     /// 4. 基因 / 挂眼球的 hediff：
-    ///    - 别人已经写过同一键的 EyeballColorDef → 让位（本模组存在的意义就是兜底）；
-    ///    - 颜色固定 → 注册一条 EyeballColorDef，交给 FA 原流程（对任何角色自动生效，最省事也最稳）；
-    ///    - 颜色是「跟随发色/肤色」的规则 → FA 的静态定义存不下，改登记 GeneOverrides / EyeHediffOverrides。
+    ///    - 别人已经写过同一键的 EyeballColorDef → 让位，但记进 FaColored*（渲染期照样摘叠加）；
+    ///    - 颜色固定 → 注册一条 EyeballColorDef，交给 FA 原流程；
+    ///    - 颜色是「跟随发色/肤色」的规则 → 登记 GeneOverrides / EyeHediffOverrides。
     ///
     /// 退让规则：只要表里已经有指向同一个 geneDef 或 hediffDef 的条目 —— 无论是 FA 本体、
     /// Experimentals、还是任何重绘包写的 —— 就直接跳过，绝不覆盖别人的颜色。
-    ///
-    /// 顺带记账：凡是「颜色确实由本模组给出」的来源都会登记进 EyeCompatRegistry.Colored*，
-    /// 渲染期据此把它们自带的眼部叠加摘掉（见 EyeOverlaySuppressPatch）—— 只改颜色不摘叠加，
-    /// 模组自己的眼睛贴图会盖在 FA 的眼球上，看起来就是瞳色没被替换。
-    ///
-    /// 注意事项：
-    /// - 只能在 Def 数据库加载完成后调用一次，运行期不要再 Add，否则会触发重复 defName 报错。
     /// </summary>
-    public static class EyeballColorDefInjector
+    public static class EyeColorDefInjector
     {
-        public static EyeCompatInjectResult Inject(List<EyeSource> sources)
+        public static EyeColorInjectResult Inject(List<EyeSource> sources)
         {
-            EyeCompatInjectResult result = new EyeCompatInjectResult();
+            EyeColorInjectResult result = new EyeColorInjectResult();
 
             HashSet<string> existingGenes = new HashSet<string>();
             HashSet<string> existingHediffs = new HashSet<string>();
@@ -87,6 +83,10 @@ namespace UniversalEyeCompat
                 {
                     result.HeuristicDetected++;
                 }
+                if (source.Elf)
+                {
+                    result.ElfDetected++;
+                }
 
                 switch (source.Kind)
                 {
@@ -100,13 +100,23 @@ namespace UniversalEyeCompat
                 }
 
                 // 让位：别人（FA 本体、Experimentals、重绘包）已经写过同一条来源的颜色，不覆盖。
+                // 但仍然记进 FaColored*：FA 会给这颗眼珠上色，所以渲染期可以放心摘掉来源自带的叠加。
                 bool alreadyHandled = source.Kind == EyeSourceKind.Gene
                     ? existingGenes.Contains(source.Key)
                     : existingHediffs.Contains(source.Key);
                 if (alreadyHandled)
                 {
+                    if (source.Kind == EyeSourceKind.Gene)
+                    {
+                        EyeColorRegistry.FaColoredGenes.Add(source.Key);
+                    }
+                    else
+                    {
+                        EyeColorRegistry.FaColoredHediffs.Add(source.Key);
+                    }
                     result.SkippedExisting++;
-                    result.Detail.Add("[让位] " + KindName(source) + " " + source.Key + " —— 已有专用瞳色定义");
+                    result.Detail.Add("[让位] " + KindName(source) + " " + source.Key
+                        + " —— 已有专用瞳色定义（叠加仍会摘掉，颜色由它负责）");
                     continue;
                 }
 
@@ -118,41 +128,13 @@ namespace UniversalEyeCompat
                 }
 
                 // 能走 FA 原生通道的条件有两条，缺一不可：
-                // 1. 这条来源装得上/挂得上（hediff 必须确定在眼球部件上，否则 FA 匹配不到）；
-                // 2. 颜色是固定值（EyeballColorDef 只有固定色字段，存不下「跟随发色/肤色」）。
+                // 1. hediff 必须确定在眼球部件上；
+                // 2. 颜色是固定值（EyeballColorDef 只有固定色字段）。
                 bool faChannel = spec.Mode == EyeColorMode.Fixed
                     && (source.Kind == EyeSourceKind.Gene || source.AppliesToEyePart);
                 if (!faChannel)
                 {
-                    // 改走运行期临时上色。这条路不看部位，也不要求固定色。
-                    if (source.Kind == EyeSourceKind.Gene)
-                    {
-                        EyeCompatRegistry.GeneOverrides[source.Key] = spec;
-                        EyeCompatRegistry.ColoredGenes.Add(source.Key);
-                        result.DynamicRegistered++;
-                        result.Detail.Add("[已登记·规则色] 基因 " + source.Key + " → " + spec.Describe()
-                            + "（识别：" + source.DetectReason + "）");
-                    }
-                    else
-                    {
-                        HediffDef hediffTarget = (HediffDef)source.SourceDef;
-                        EyeCompatRegistry.ColoredHediffs.Add(hediffTarget);
-                        if (source.IsImplant)
-                        {
-                            // 装置类（义眼、面罩）比疾病/状态类更具体，放更高优先级的档位。
-                            EyeCompatRegistry.EyeHediffOverrides[hediffTarget] = spec;
-                            result.DeviceRegistered++;
-                            result.Detail.Add("[已登记·装置] hediff " + source.Key + " → " + spec.Describe()
-                                + "（来源：" + origin + "，识别：" + source.DetectReason + "）");
-                        }
-                        else
-                        {
-                            EyeCompatRegistry.GlobalHediffColors[hediffTarget] = spec;
-                            result.GlobalRegistered++;
-                            result.Detail.Add("[已登记·全身状态] hediff " + source.Key + " → " + spec.Describe()
-                                + "（来源：" + origin + "，识别：" + source.DetectReason + "）");
-                        }
-                    }
+                    RegisterRunTimeOverride(source, spec, origin, result);
                     continue;
                 }
 
@@ -163,22 +145,31 @@ namespace UniversalEyeCompat
                     continue;
                 }
 
-                string defName = "UEC_" + source.Kind + "_" + source.Key;
+                string defName = "UECP_" + source.Kind + "_" + source.Key;
                 HediffDef hediffDef = source.Kind == EyeSourceKind.Hediff ? source.SourceDef as HediffDef : null;
                 string geneName = source.Kind == EyeSourceKind.Gene ? source.Key : null;
-                if (FacialAnimationBridge.TryAddEyeballColorDef(defName, "万能眼部兼容：" + source.Label, geneName, hediffDef, fixedColor))
+                if (FacialAnimationBridge.TryAddEyeballColorDef(defName, "万用瞳色补丁：" + source.Label, geneName, hediffDef, fixedColor))
                 {
                     if (geneName != null)
                     {
-                        EyeCompatRegistry.ColoredGenes.Add(geneName);
+                        EyeColorRegistry.ColoredGenes.Add(geneName);
+
+                        // 精灵兼容的第二道保险：除了注册 FA 定义，也登记进运行期临时上色表。
+                        // 两者的颜色相同，正常情况没有区别；万一 FA 的 geneDef 通道因为版本 / 加载顺序
+                        // 没能生效，LoadTexturesPatch 仍会在它读颜色之前把同一颜色写进去。
+                        // 精灵是玩家最容易直接看到「颜色没变」的一类来源，值得多这一层。
+                        if (source.Elf)
+                        {
+                            EyeColorRegistry.GeneOverrides[geneName] = spec;
+                        }
                     }
                     else if (hediffDef != null)
                     {
-                        EyeCompatRegistry.ColoredHediffs.Add(hediffDef);
+                        EyeColorRegistry.ColoredHediffs.Add(hediffDef);
                     }
-                    result.InjectedToFA++;
-                    result.Detail.Add("[已注册·FA] " + KindName(source) + " " + source.Key + " → " + ColorText(fixedColor)
-                        + "（来源：" + origin + "，识别：" + source.DetectReason + "）");
+                    result.InjectedToFa++;
+                    result.Detail.Add("[已注册·FA] " + KindName(source) + " " + source.Key + " → " + ColorText.Of(fixedColor)
+                        + "（来源：" + origin + "，识别：" + source.DetectReason + "）" + ElfTag(source));
                 }
                 else
                 {
@@ -189,7 +180,38 @@ namespace UniversalEyeCompat
             return result;
         }
 
-        private static void RegisterTraitOverride(EyeSource source, EyeCompatInjectResult result)
+        private static void RegisterRunTimeOverride(EyeSource source, EyeColorSpec spec, string origin, EyeColorInjectResult result)
+        {
+            if (source.Kind == EyeSourceKind.Gene)
+            {
+                EyeColorRegistry.GeneOverrides[source.Key] = spec;
+                EyeColorRegistry.ColoredGenes.Add(source.Key);
+                result.DynamicRegistered++;
+                result.Detail.Add("[已登记·规则色] 基因 " + source.Key + " → " + spec.Describe()
+                    + "（识别：" + source.DetectReason + "）" + ElfTag(source));
+                return;
+            }
+
+            HediffDef hediffTarget = (HediffDef)source.SourceDef;
+            EyeColorRegistry.ColoredHediffs.Add(hediffTarget);
+            if (source.IsImplant)
+            {
+                // 装置类（义眼、面罩）比疾病/状态类更具体，放更高优先级的档位。
+                EyeColorRegistry.EyeHediffOverrides[hediffTarget] = spec;
+                result.DeviceRegistered++;
+                result.Detail.Add("[已登记·装置] hediff " + source.Key + " → " + spec.Describe()
+                    + "（来源：" + origin + "，识别：" + source.DetectReason + "）");
+            }
+            else
+            {
+                EyeColorRegistry.GlobalHediffColors[hediffTarget] = spec;
+                result.GlobalRegistered++;
+                result.Detail.Add("[已登记·全身状态] hediff " + source.Key + " → " + spec.Describe()
+                    + "（来源：" + origin + "，识别：" + source.DetectReason + "）");
+            }
+        }
+
+        private static void RegisterTraitOverride(EyeSource source, EyeColorInjectResult result)
         {
             if (!EyeColorResolver.TryResolve(source, true, out EyeColorSpec spec, out string origin))
             {
@@ -197,14 +219,14 @@ namespace UniversalEyeCompat
                 result.Detail.Add("[无法取色] 特性 " + source.Key + "（" + source.Label + "）" + Describe(source));
                 return;
             }
-            EyeCompatRegistry.TraitColors[source.Key] = spec;
-            EyeCompatRegistry.ColoredTraits.Add(source.Key);
+            EyeColorRegistry.TraitColors[source.Key] = spec;
+            EyeColorRegistry.ColoredTraits.Add(source.Key);
             result.TraitRegistered++;
             result.Detail.Add("[已登记·特性] " + source.Key + " → " + spec.Describe()
                 + "（来源：" + origin + "，识别：" + source.DetectReason + "）");
         }
 
-        private static void RegisterRaceOverride(EyeSource source, EyeCompatInjectResult result)
+        private static void RegisterRaceOverride(EyeSource source, EyeColorInjectResult result)
         {
             // 种族来源禁止猜色，理由见 EyeColorResolver.TryResolve 的 allowGuessing 注释。
             if (!EyeColorResolver.TryResolve(source, false, out EyeColorSpec spec, out string origin))
@@ -212,7 +234,7 @@ namespace UniversalEyeCompat
                 // 没声明颜色的种族在前面已被记录过，这里不重复计为失败。
                 return;
             }
-            EyeCompatRegistry.RaceColors[(ThingDef)source.SourceDef] = spec;
+            EyeColorRegistry.RaceColors[(ThingDef)source.SourceDef] = spec;
             result.RaceRegistered++;
             result.Detail.Add("[已登记·种族] " + source.Key + " → " + spec.Describe() + "（来源：" + origin + "）");
         }
@@ -235,6 +257,11 @@ namespace UniversalEyeCompat
             return reason + "［诊断：贴图=" + string.Join(" | ", source.TexturePaths) + "］";
         }
 
+        private static string ElfTag(EyeSource source)
+        {
+            return source.Elf ? "（精灵兼容）" : string.Empty;
+        }
+
         private static string KindName(EyeSource source)
         {
             switch (source.Kind)
@@ -248,11 +275,6 @@ namespace UniversalEyeCompat
                 default:
                     return "种族";
             }
-        }
-
-        public static string ColorText(Color color)
-        {
-            return "RGB(" + color.r.ToString("0.000") + "," + color.g.ToString("0.000") + "," + color.b.ToString("0.000") + ")";
         }
     }
 }
