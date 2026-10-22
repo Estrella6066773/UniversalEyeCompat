@@ -83,19 +83,52 @@ namespace UniversalEyeColorPatch
         /// 这张脸会不会被 FA 画出来。摘掉叠加之前必须问一次，否则会给尸体 / 被关闭的种族摘成
         /// 一张没有眼睛的脸。
         ///
-        /// 优先直接调用 FA 自己的 FAHelper.ShouldDrawPawn：
-        /// 它同时检查性别开关、种族/异型开关、DrawFaceGraphicsComp 是否初始化并启用、渲染模式是否为尸体。
-        /// 找不到这个方法时退回等价的手工判定。
+        /// 关键区别（上一版没区分，导致「点」残留）：
+        /// - DrawFaceGraphicsComp 已初始化但 EnableDrawing == false → FA 明确不画，保留叠加；
+        /// - DrawFaceGraphicsComp 还没初始化（渲染树首帧，EnableDrawing 这时也还没算出来）
+        ///   → 不能当成「不画」。这时按「会画」处理，并让调用方请求一次重建，
+        ///   等初始化完成后再按真实状态复核。
         ///
+        /// <paramref name="pendingRebuild"/> 为 true 表示「这次判定发生在初始化之前，需要重建渲染树复核」。
         /// <paramref name="determined"/> 表示「我们是否真的问到了」。
-        /// 问不到时调用方应保守处理（保留叠加）。
         /// </summary>
-        public static bool ShouldDrawFace(Pawn pawn, out bool determined)
+        public static bool ShouldDrawFace(Pawn pawn, out bool determined, out bool pendingRebuild)
         {
             determined = false;
+            pendingRebuild = false;
             if (pawn == null)
             {
                 return false;
+            }
+
+            // 尸体 / 腐烂阶段：FA 的 CompRenderNodes 会直接返回 null，不建任何人脸节点。
+            if (pawn.Drawer?.renderer != null && (int)pawn.Drawer.renderer.CurRotDrawMode == 4)
+            {
+                determined = true;
+                return false;
+            }
+
+            object faceComp = GetFaceComp(pawn);
+            if (faceComp != null && FaceCompInitializedProperty != null && FaceCompEnableDrawingProperty != null)
+            {
+                try
+                {
+                    bool initialized = (bool)FaceCompInitializedProperty.GetValue(faceComp, null);
+                    bool enabled = (bool)FaceCompEnableDrawingProperty.GetValue(faceComp, null);
+                    determined = true;
+                    if (!initialized)
+                    {
+                        // 渲染树首帧：FA 组件还没初始化，EnableDrawing 也还没算出来。
+                        // 按「会画」处理，并要求重建一次，避免节点被永久保留。
+                        pendingRebuild = true;
+                        return true;
+                    }
+                    return enabled;
+                }
+                catch (Exception)
+                {
+                    // 读不到状态就退回 FAHelper。
+                }
             }
 
             if (ShouldDrawPawnMethod != null)
@@ -108,36 +141,9 @@ namespace UniversalEyeColorPatch
                 }
                 catch (Exception)
                 {
-                    // 落到下面的手工判定。
                 }
             }
-
-            object faceComp = GetFaceComp(pawn);
-            if (faceComp == null)
-            {
-                return false;
-            }
-
-            try
-            {
-                // 尸体 / 腐烂阶段：FA 的 CompRenderNodes 会直接返回 null，不建任何人脸节点。
-                if (pawn.Drawer?.renderer != null && (int)pawn.Drawer.renderer.CurRotDrawMode == 4)
-                {
-                    determined = true;
-                    return false;
-                }
-                bool initialized = FaceCompInitializedProperty == null
-                    || (bool)FaceCompInitializedProperty.GetValue(faceComp, null);
-                bool enabled = FaceCompEnableDrawingProperty != null
-                    && (bool)FaceCompEnableDrawingProperty.GetValue(faceComp, null);
-                determined = true;
-                return initialized && enabled;
-            }
-            catch (Exception)
-            {
-                determined = false;
-                return false;
-            }
+            return false;
         }
 
         /// <summary>取 FA 的「画不画脸」组件；没有就返回 null。</summary>

@@ -83,7 +83,14 @@ namespace UniversalEyeColorPatch
             }
 
             bool determined;
-            bool draws = FacialAnimationBridge.ShouldDrawFace(pawn, out determined);
+            bool pendingRebuild;
+            bool draws = FacialAnimationBridge.ShouldDrawFace(pawn, out determined, out pendingRebuild);
+            if (pendingRebuild)
+            {
+                // 渲染树首帧、FA 还没初始化：这次按「会画」摘掉，并安排一次重建，
+                // 等 FA 初始化完成后按真实状态复核（否则节点会一直留在树里）。
+                FaceRebuildGate.Mark(pawn);
+            }
             if (!determined)
             {
                 // 问不到 FA 的判定（版本差异）时退回旧行为：有眼球控制器就当它在画。
