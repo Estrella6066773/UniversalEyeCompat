@@ -14,8 +14,11 @@
     <DebugType>portable</DebugType>
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
     <GenerateDependencyFile>false</GenerateDependencyFile>
-    <Version>2.0.0</Version>
+    <Version>2.0.1</Version>
     <RimWorldPath>E:\SteamLibrary\steamapps\common\RimWorld</RimWorldPath>
+    <!-- Harmony 模组已升级到 0Harmony 3.0.0.0；编译引用必须与运行时一致，
+         否则按 2.4.2 编译的程序集会报 TypeLoadException: HarmonyLib.Harmony。 -->
+    <HarmonyPath Condition="'$(HarmonyPath)' == ''">E:\SteamLibrary\steamapps\workshop\content\294100\2009463077\1.7\Assemblies\0Harmony.dll</HarmonyPath>
   </PropertyGroup>
 
   <ItemGroup>
@@ -27,9 +30,10 @@
       <HintPath>$(RimWorldPath)\UnityStubs.dll</HintPath>
       <Private>false</Private>
     </Reference>
-    <PackageReference Include="Lib.Harmony" Version="2.4.2">
-      <ExcludeAssets>runtime</ExcludeAssets>
-    </PackageReference>
+    <Reference Include="0Harmony">
+      <HintPath>$(HarmonyPath)</HintPath>
+      <Private>false</Private>
+    </Reference>
   </ItemGroup>
 
 </Project>
